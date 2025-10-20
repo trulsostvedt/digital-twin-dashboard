@@ -274,6 +274,21 @@ with tabs[0]:
     # ===== Row 1: Monthly leaderboard (left) + Category breakdown (right) =====
     left, right = st.columns([1.05, 1])
 
+# Announcements below the chart
+    if last_month:
+        lm_view = view[view["YearMonth"] == last_month]
+        lm_winner, lm_value = monthly_leader(lm_view)
+        if lm_winner is not None:
+            st.info(f"Last month winner: Class {lm_winner} — {lm_value:.2f} points")
+
+    if this_month and sel_month == this_month:
+        tm_view = view[view["YearMonth"] == this_month]
+        tm_winner, tm_value = monthly_leader(tm_view)
+        if tm_winner is not None:
+            st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
+
+
+
     with left:
         st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
         
@@ -290,20 +305,7 @@ with tabs[0]:
         else:
             st.write("No submissions for the selected month (with current filters).")
         
-        # Announcements below the chart
-        if last_month:
-            lm_view = view[view["YearMonth"] == last_month]
-            lm_winner, lm_value = monthly_leader(lm_view)
-            if lm_winner is not None:
-                st.info(f"Last month winner: Class {lm_winner} — {lm_value:.2f} points")
-
-        if this_month and sel_month == this_month:
-            tm_view = view[view["YearMonth"] == this_month]
-            tm_winner, tm_value = monthly_leader(tm_view)
-            if tm_winner is not None:
-                st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
-
-
+        
     with right:
         st.subheader("Category breakdown (average per submission)")
         cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
