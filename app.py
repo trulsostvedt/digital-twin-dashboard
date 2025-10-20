@@ -71,15 +71,21 @@ def fetch_csv(url: str) -> pd.DataFrame:
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
     ts_col = next((c for c in df.columns if "timestamp" in c.lower()), None)
+
     if ts_col:
         s = df[ts_col].astype(str).str.strip()
-        s = s.str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)  # remove "kl."
-        s = s.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)  # 12.13.18 -> 12:13:18
-        dt = pd.to_datetime(s, errors="coerce", dayfirst=True, infer_datetime_format=True)
+
+        # Først: prøv direkte ISO-format (som du har: 2025-10-18 19:22:05)
+        dt = pd.to_datetime(s, errors="coerce", utc=False)
+
+        # Hvis noe er NaT, prøv fallback for gamle "kl."-formater
         mask = dt.isna()
         if mask.any():
-            dt2 = pd.to_datetime(s[mask], format="%d.%m.%Y %H:%M:%S", errors="coerce")
+            s2 = s[mask].str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)
+            s2 = s2.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)
+            dt2 = pd.to_datetime(s2, errors="coerce", dayfirst=True)
             dt.loc[mask] = dt2
+
         df["Timestamp_dt"] = dt
         df["Date"] = df["Timestamp_dt"].dt.date
         df["YearMonth"] = df["Timestamp_dt"].dt.to_period("M").astype(str)
@@ -87,7 +93,9 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
         df["Timestamp_dt"] = pd.NaT
         df["Date"] = pd.NaT
         df["YearMonth"] = np.nan
+
     return df
+
 
 def infer_class_col(df: pd.DataFrame) -> str:
     for p in ["What is your class?", "Which class?", "Class"]:
