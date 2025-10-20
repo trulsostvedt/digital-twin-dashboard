@@ -341,11 +341,26 @@ with tabs[0]:
 
     with right2:
         st.subheader("Points over time")
-        if view["Date"].notna().any():
-            trend = (view.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
-            st.line_chart(trend, use_container_width=True)
+
+        # --- ensure Date is parsed correctly ---
+        if "Date" not in view.columns and "Timestamp_dt" in view.columns:
+            view["Date"] = pd.to_datetime(view["Timestamp_dt"], errors="coerce").dt.date
         else:
-            st.write("No valid dates parsed from Timestamp.")
+            # Convert even if Date already exists, to ensure type
+            view["Date"] = pd.to_datetime(view["Date"], errors="coerce").dt.date
+
+        valid_rows = view.dropna(subset=["Date"])
+        if not valid_rows.empty:
+            trend = (
+                valid_rows.groupby("Date")[["Total pts"]]
+                .sum(numeric_only=True)
+                .sort_index()
+            )
+            st.line_chart(trend, use_container_width=True)
+            st.caption(f"Showing {len(trend)} days of activity.")
+        else:
+            st.warning("No valid timestamps found — check that 'Timestamp' column exists and is parsed.")
+
 
     # ===== Row 3: Latest submissions (full width) =====
     st.subheader("Latest submissions")
