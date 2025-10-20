@@ -1,168 +1,93 @@
-# -*- coding: utf-8 -*-
-"""
-Digital Twin — Sustainability Dashboard (Lean & Polished)
-- Focused UX: KPIs → Monthly Leaderboard → Latest Submissions → Class Detail
-- Dark/Light theme aware (CSS + Plotly)
-- Robust timestamp parsing; flexible scoring from form answers
-- Natural class sort (1A, 1B, …, 10A)
-- Embedded Google Form in a separate tab
-"""
-
-import re
-from io import StringIO
-from typing import Optional, Tuple
-
-import numpy as np
 import pandas as pd
-import plotly.express as px
+import numpy as np
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
+from io import StringIO
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import streamlit.components.v1 as components
 
-
-# ----------------------------------------------------------------------
+# ----------------------------
 # CONFIG
-# ----------------------------------------------------------------------
-st.set_page_config(
-    page_title="Digital Twin – Sustainability Dashboard",
-    page_icon="🌿",
-    layout="wide",
-)
+# ----------------------------
+st.set_page_config(page_title="Digital Twin – Sustainability Dashboard",
+                   page_icon="🌿", layout="wide")
 
-# Branding (optional)
-APP_TITLE = "Digital Twin — Sustainability Dashboard"
-APP_SUBTITLE = "Daily sustainability log and monthly class leaderboard"
-
-# Fixed Google Sheets CSV (Answer Log tab)
+# Google Sheets (fast URL til "Answer Log")
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1I9o3wvPS73huWO5_lLenhylSmjfMzDfnuR3kr4GcK34/"
     "gviz/tq?tqx=out:csv&sheet=Answer%20Log"
 )
 
-# Embedded Google Form (same form your teachers use)
+# (Valgfritt) Google Form inne i appen
 GOOGLE_FORM_URL = (
     "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=sf_link"
 )
 
-# ----------------------------------------------------------------------
-# THEME-AWARE CSS (keeps it sleek in dark & light)
-# ----------------------------------------------------------------------
+# ----------------------------
+# THEME-AWARE CSS (fungerer i dark & light)
+# ----------------------------
 THEME_CSS = """
 <style>
 :root { --radius: 14px; }
-.block-container { padding-top: 0.75rem; padding-bottom: 0.75rem; }
-
-/* Header */
-.header-card {
+/* Bruk Streamlit sine farge-variabler, så tilpasser alt seg til mørk/lys modus */
+[data-testid="stMetric"] {
   background: var(--secondary-background-color);
   border: 1px solid var(--background-color);
   border-radius: var(--radius);
-  padding: 16px 18px;
-  margin-bottom: 6px;
-}
-
-/* Metrics */
-.kpi-row [data-testid="stMetric"]{
-  background: var(--secondary-background-color);
-  border: 1px solid var(--background-color);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 12px 12px;
   box-shadow: 0 1px 8px rgba(0,0,0,0.06);
 }
-
-/* Section cards */
-.section-card {
-  background: var(--secondary-background-color);
-  border: 1px solid var(--background-color);
-  border-radius: var(--radius);
-  padding: 14px;
-  box-shadow: 0 1px 8px rgba(0,0,0,0.04);
-  margin-bottom: 10px;
-}
-
-/* DataFrames */
 div[data-testid="stDataFrame"] {
   border: 1px solid var(--secondary-background-color);
   border-radius: var(--radius);
   box-shadow: 0 1px 8px rgba(0,0,0,0.04);
 }
-
-/* Typography */
-h1,h2,h3 { letter-spacing: .2px; }
-hr, .st-emotion-cache-12w0qpk { border-color: var(--secondary-background-color)!important; }
+hr, .st-emotion-cache-12w0qpk {  /* horisontlinje */
+  border-color: var(--secondary-background-color) !important;
+}
+h1, h2, h3 { letter-spacing: 0.2px; }
+.block-container { padding-top: 1.0rem; padding-bottom: 1.0rem; }
 </style>
 """
 st.markdown(THEME_CSS, unsafe_allow_html=True)
 
-def plotly_template() -> str:
-    base = st.get_option("theme.base")
-    return "plotly_dark" if str(base).lower() == "dark" else "plotly_white"
-
-
-# ----------------------------------------------------------------------
+# ----------------------------
 # AUTO-REFRESH
-# ----------------------------------------------------------------------
+# ----------------------------
 with st.sidebar:
-    st.title("Refresh")
-    refresh_sec = st.slider("Auto-refresh every (seconds)", 15, 300, 60)
+    st.title("Auto-refresh")
+    refresh_sec = st.slider("Refresh every (seconds)", 15, 300, 60)
 _ = st_autorefresh(interval=refresh_sec*1000, key="auto")
 
-
-# ----------------------------------------------------------------------
-# HTTP (retry) + CACHE
-# ----------------------------------------------------------------------
-def _requests_session() -> requests.Session:
-    s = requests.Session()
-    retries = Retry(
-        total=3, backoff_factor=0.4,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset(["GET"])
-    )
-    s.mount("https://", HTTPAdapter(max_retries=retries))
-    s.mount("http://", HTTPAdapter(max_retries=retries))
-    return s
-
-@st.cache_data(ttl=20, show_spinner=False)
+# ----------------------------
+# DATA LOADING
+# ----------------------------
+@st.cache_data(ttl=10, show_spinner=False)
 def fetch_csv(url: str) -> pd.DataFrame:
-    r = _requests_session().get(url, timeout=10)
+    r = requests.get(url, timeout=10)
     r.raise_for_status()
     return pd.read_csv(StringIO(r.text))
 
-
-# ----------------------------------------------------------------------
-# DATA CLEANING & SCORING
-# ----------------------------------------------------------------------
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
     ts_col = next((c for c in df.columns if "timestamp" in c.lower()), None)
-
     if ts_col:
         s = df[ts_col].astype(str).str.strip()
-
-        # Prefer ISO (e.g. 2025-10-18 19:22:05)
-        dt = pd.to_datetime(s, errors="coerce", utc=False)
-
-        # Fallback for "16.10.2025 kl. 12.13.18"
+        s = s.str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)               # fjern "kl."
+        s = s.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)  # 12.13.18 -> 12:13:18
+        dt = pd.to_datetime(s, errors="coerce", dayfirst=True, infer_datetime_format=True)
         mask = dt.isna()
         if mask.any():
-            s2 = s[mask].str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)
-            s2 = s2.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)
-            dt2 = pd.to_datetime(s2, errors="coerce", dayfirst=True)
+            dt2 = pd.to_datetime(s[mask], format="%d.%m.%Y %H:%M:%S", errors="coerce")
             dt.loc[mask] = dt2
-
         df["Timestamp_dt"] = dt
-        df["Date"] = pd.to_datetime(df["Timestamp_dt"], errors="coerce").dt.date
-        df["YearMonth"] = pd.to_datetime(df["Timestamp_dt"], errors="coerce").dt.to_period("M").astype(str)
+        df["Date"] = df["Timestamp_dt"].dt.date
+        df["YearMonth"] = df["Timestamp_dt"].dt.to_period("M").astype(str)
     else:
         df["Timestamp_dt"] = pd.NaT
         df["Date"] = pd.NaT
         df["YearMonth"] = np.nan
-
     return df
 
 def infer_class_col(df: pd.DataFrame) -> str:
@@ -172,6 +97,7 @@ def infer_class_col(df: pd.DataFrame) -> str:
     opts = [c for c in df.columns if "class" in c.lower()]
     return opts[0] if opts else df.columns[0]
 
+# Fallback-scoreberegning dersom poengkolonner ikke finnes i arket
 def count_yeses(text: str) -> int:
     return text.count("Yes") if isinstance(text, str) else 0
 
@@ -185,15 +111,15 @@ def score_heater(val: str) -> int:
     if "did not close anything" in s: return 0
     return 0
 
-def _num(v) -> float:
-    try: return float(str(v).replace(",", "."))
-    except: return 0.0
-
 def score_plastic(g) -> float:
-    return min(round(_num(g)/100, 1), 5)
+    try: v = float(str(g).replace(",", "."))
+    except: return 0.0
+    return min(round(v/100, 1), 5)
 
 def score_paper(g) -> float:
-    return min(round(_num(g)/100, 1), 5)
+    try: v = float(str(g).replace(",", "."))
+    except: return 0.0
+    return min(round(v/100, 1), 5)
 
 def score_garden(water, collect, plant) -> int:
     pts = 0
@@ -204,9 +130,9 @@ def score_garden(water, collect, plant) -> int:
 
 def ensure_points(df: pd.DataFrame) -> pd.DataFrame:
     cols = df.columns
-    if all(c in cols for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"]) and "Total pts" in cols:
-        return df
-
+    has_points = all(c in cols for c in
+                     ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"]) and ("Total pts" in cols)
+    if has_points: return df
     C_LIGHTS  = next((c for c in cols if "turn off the lights" in c.lower()), None)
     C_HEATER  = next((c for c in cols if "using the heater" in c.lower()), None)
     C_PLAST   = next((c for c in cols if "grams of plastic" in c.lower()), None)
@@ -214,12 +140,10 @@ def ensure_points(df: pd.DataFrame) -> pd.DataFrame:
     C_WATER   = next((c for c in cols if "water the plants" in c.lower()), None)
     C_COLLECT = next((c for c in cols if "collect any plants" in c.lower()), None)
     C_PLANT   = next((c for c in cols if "plant any seeds" in c.lower() or "planted new things" in c.lower()), None)
-
     df["Lights pts"]  = df[C_LIGHTS].apply(count_yeses) if C_LIGHTS in cols else 0
     df["Heater pts"]  = df[C_HEATER].apply(score_heater) if C_HEATER in cols else 0
     df["Plastic pts"] = df[C_PLAST].apply(score_plastic) if C_PLAST in cols else 0
     df["Paper pts"]   = df[C_PAPER].apply(score_paper)   if C_PAPER in cols else 0
-
     df["Garden pts"]  = [
         score_garden(w, c, p)
         for w,c,p in zip(df[C_WATER] if C_WATER in cols else [None]*len(df),
@@ -229,182 +153,158 @@ def ensure_points(df: pd.DataFrame) -> pd.DataFrame:
     df["Total pts"]   = df[["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"]].sum(axis=1)
     return df
 
-def load_data() -> Tuple[pd.DataFrame, str]:
+def load_data():
     df = fetch_csv(SHEET_CSV_URL)
     df = normalize_columns(df)
-    # drop helper "Result..." columns from Forms
     drop_like = [c for c in df.columns if c.strip().lower().startswith("result")]
-    if drop_like:
-        df = df.drop(columns=drop_like)
-    class_col = infer_class_col(df)
+    if drop_like: df = df.drop(columns=drop_like)
+    cls = infer_class_col(df)
     df = ensure_points(df)
-    return df, class_col
+    return df, cls
 
-# Natural class sorting key: 1A, 1B, …, 10A, 10B
-def class_sort_key(x: str):
-    if not isinstance(x, str): return (9999, "")
-    s = x.strip()
-    m = re.search(r"(\d+)\s*([A-Za-z]+)", s)
-    if m:
-        return (int(m.group(1)), m.group(2).lower())
-    return (9998, s.lower())
-
-
-# ----------------------------------------------------------------------
-# SIMPLE PLOTTING
-# ----------------------------------------------------------------------
-def bar_series(s: pd.Series, height: int=360):
-    s = s.copy()
-    if s.index.dtype == object:
-        s = s.reindex(sorted(s.index, key=class_sort_key))
-    fig = px.bar(
-        x=s.index.astype(str), y=s.values,
-        labels={"x":"", "y":""},
-        template=plotly_template()
-    )
-    fig.update_layout(margin=dict(l=0,r=0,t=10,b=0), height=height)
-    st.plotly_chart(fig, use_container_width=True, theme=None)
-
-
-# ----------------------------------------------------------------------
-# APP LAYOUT
-# ----------------------------------------------------------------------
+# ----------------------------
+# APP LAYOUT (to faner)
+# ----------------------------
 tabs = st.tabs(["Dashboard", "Submit log"])
 
-# ===== TAB 2: SUBMIT =====
-with tabs[1]:
-    st.title("Submit log")
-    st.write("Register points via the form below. Submissions appear in the dashboard automatically.")
-    components.iframe(GOOGLE_FORM_URL, height=1200)
-
-# ===== TAB 1: DASHBOARD =====
+# ============ TAB 1: DASHBOARD ============
 with tabs[0]:
-    # Header
-    st.markdown('<div class="header-card">', unsafe_allow_html=True)
-    st.title(APP_TITLE)
-    st.caption(APP_SUBTITLE)
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.title("Digital Twin — Sustainability Dashboard")
 
     try:
         df, CLASS = load_data()
     except Exception as e:
         st.error(
-            "Could not load data from Google Sheets. "
-            "Ensure the spreadsheet is shared as 'Anyone with the link → Viewer'.\n\nDetails: {}".format(e)
+            "Kunne ikke laste data fra Google Sheets. "
+            "Sjekk at arket er delt som 'Alle med lenken → Seer'.\n\nDetaljer: {}".format(e)
         )
         st.stop()
 
     if df.empty:
-        st.warning("No data yet. Submit a response in the form.")
+        st.warning("Ingen data enda. Send inn et svar i skjemaet.")
         st.stop()
 
-    # Sidebar filters
+    # Filtre
     with st.sidebar:
         st.title("Filters")
-        classes_all = sorted([c for c in df[CLASS].dropna().unique().tolist()], key=class_sort_key)
-        picked = st.multiselect("Class", classes_all, default=classes_all)
+        classes = sorted([c for c in df[CLASS].dropna().unique().tolist()])
+        picked = st.multiselect("Class", classes, default=classes)
 
         if df["Date"].notna().any():
-            dmin, dmax = pd.to_datetime(df["Date"]).min(), pd.to_datetime(df["Date"]).max()
+            dmin, dmax = df["Date"].min(), df["Date"].max()
             date_range = st.date_input("Date range", value=(dmin, dmax))
         else:
             date_range = (None, None)
 
         st.markdown("---")
-        st.subheader("Leaderboard month")
-        months_all = sorted([m for m in df["YearMonth"].dropna().unique()])
-        current_month = pd.Timestamp.now().strftime("%Y-%m")
-        default_month = months_all.index(current_month) if current_month in months_all else (len(months_all)-1 if months_all else 0)
-        sel_month = st.selectbox("Month", months_all if months_all else ["–"], index=max(default_month, 0))
-        metric = st.radio("Ranking by", ["Total points", "Average points"], index=0)
+        st.subheader("Monthly leaderboard")
+        months = sorted([m for m in df["YearMonth"].dropna().unique()])
+        default_idx = max(len(months)-1, 0) if months else 0
+        sel_month = st.selectbox("Month", months if months else ["–"], index=default_idx)
+        metric = st.radio("Metric", ["Total points", "Average points"], index=0)
 
-    # Apply filters
-    view = df.copy()
-    if picked:
-        view = view[view[CLASS].isin(picked)]
+    mask = df[CLASS].isin(picked)
     if date_range[0] and date_range[1]:
-        view = view[(pd.to_datetime(view["Date"]) >= pd.to_datetime(date_range[0]))
-                    & (pd.to_datetime(view["Date"]) <= pd.to_datetime(date_range[1]))]
+        mask &= (df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])
+    view = df.loc[mask].copy()
 
-    view["Day"] = pd.to_datetime(view["Timestamp_dt"], errors="coerce").dt.floor("D")
-    month_view = view[view["YearMonth"] == sel_month]
-
-    # KPIs
-    st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Submissions", f"{len(view):,}")
-    c2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}" if len(view) else "–")
-    today = pd.Timestamp.now().floor("D")
-    today_pts = pd.to_numeric(view.loc[view["Day"]==today, "Total pts"], errors="coerce").sum()
-    c3.metric("Today total", int(today_pts) if pd.notna(today_pts) else 0)
+    # KPI-er
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("Submissions", f"{len(view):,}")
+    col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}" if len(view) else "–")
+    today = pd.Timestamp('today').date()
+    today_pts = pd.to_numeric(view.loc[view["Date"]==today, "Total pts"], errors="coerce").sum()
+    col3.metric("Today total", int(today_pts) if pd.notna(today_pts) else 0)
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
-    c4.metric("Highest single score", 0 if pd.isna(best) else int(best))
+    best_display = 0 if pd.isna(best) else int(best)
+    col4.metric("Highest single score", best_display)
+    top = (view.groupby(CLASS)["Total pts"].apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
+           .sort_values(ascending=False).head(1))
+    col5.metric("Top class (avg)", f"{top.index[0]} ({top.iloc[0]:.2f})" if not top.empty else "–")
 
-    # Monthly top class KPI
-    if not month_view.empty:
-        s_month = (month_view.groupby(CLASS)["Total pts"]
-                   .apply(lambda x: pd.to_numeric(x, errors="coerce").sum()
-                          if metric=="Total points"
-                          else pd.to_numeric(x, errors="coerce").mean()))
-        s_month = s_month.reindex(sorted(s_month.index, key=class_sort_key))
-        if not s_month.empty:
-            c5.metric("Top class (monthly)", f"{s_month.idxmax()} ({s_month.max():.2f})")
+    st.markdown("---")
+
+    # Venstre (leaderboards) / Høyre (grafer og logg)
+    left, right = st.columns([1.05, 1])
+
+    with left:
+        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
+        if months and sel_month in months:
+            month_view = view[view["YearMonth"] == sel_month]
+            if metric == "Total points":
+                leader_m = (month_view.groupby(CLASS)["Total pts"]
+                            .apply(lambda s: pd.to_numeric(s, errors="coerce").sum())
+                            .sort_values(ascending=True))
+            else:
+                leader_m = (month_view.groupby(CLASS)["Total pts"]
+                            .apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
+                            .sort_values(ascending=True))
+            if not leader_m.empty:
+                st.bar_chart(leader_m, use_container_width=True)
+                winner, val = leader_m.idxmax(), leader_m.max()
+                unit = "total" if metric == "Total points" else "avg"
+                st.success(f"Winner {sel_month}: Class {winner} — {val:.2f} points ({unit})")
+            else:
+                st.info("No submissions for that month with current filters.")
         else:
-            c5.metric("Top class (monthly)", "–")
-    else:
-        c5.metric("Top class (monthly)", "–")
-    st.markdown('</div>', unsafe_allow_html=True)
+            st.info("No months available yet.")
 
-    st.markdown("")
+        st.subheader("Leaderboard (avg points by class)")
+        leader = (view.groupby(CLASS)["Total pts"]
+                  .apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
+                  .sort_values(ascending=True))
+        if not leader.empty:
+            st.bar_chart(leader, use_container_width=True)
+        else:
+            st.write("No data in current filters.")
 
-    # Monthly leaderboard (single hero chart)
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
-    if not month_view.empty:
-        s = (month_view.groupby(CLASS)["Total pts"]
-             .apply(lambda x: pd.to_numeric(x, errors="coerce").sum()
-                    if metric=="Total points"
-                    else pd.to_numeric(x, errors="coerce").mean()))
-        bar_series(s)
-    else:
-        st.info("No submissions for the selected month with the current filters.")
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.subheader("Category breakdown (avg per submission)")
+        cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
+        if cat_cols:
+            cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+            st.bar_chart(cats, use_container_width=True)
+        else:
+            st.write("No category columns available.")
 
-    # Latest submissions (wide)
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
-    st.subheader("Latest submissions")
-    base_cols = ["Timestamp_dt", CLASS, "Total pts", "Lights pts", "Heater pts", "Plastic pts", "Paper pts", "Garden pts"]
-    show_cols = [c for c in base_cols if c in view.columns]
-    latest = (view.sort_values("Timestamp_dt", ascending=False)[show_cols]
-              .rename(columns={"Timestamp_dt":"Timestamp"}).head(50))
-    st.dataframe(latest, use_container_width=True, height=420)
-    st.download_button(
-        label="Download filtered data (CSV)",
-        data=view.to_csv(index=False).encode("utf-8"),
-        file_name="digital-twin_filtered.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
-    st.markdown('</div>', unsafe_allow_html=True)
+    with right:
+        st.subheader("Points over time")
+        if view["Date"].notna().any():
+            trend = (view.groupby("Date")[["Total pts"]]
+                     .sum(numeric_only=True).sort_index())
+            st.line_chart(trend, use_container_width=True)
+        else:
+            st.write("No valid dates parsed from Timestamp.")
 
-    # Class detail
-    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Latest submissions")
+        show_cols = ["Timestamp_dt", CLASS, "Total pts"] + [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
+        latest = (view.sort_values("Timestamp_dt", ascending=False)[show_cols]
+                  .rename(columns={"Timestamp_dt":"Timestamp"}).head(25))
+        st.dataframe(latest, use_container_width=True, height=440)
+
+    st.markdown("---")
     st.subheader("Class detail")
-    classes_sorted = sorted([c for c in df[CLASS].dropna().unique().tolist()], key=class_sort_key)
-    d1, d2 = st.columns([1,1])
-    pick_one = d1.selectbox("Select class", classes_sorted if classes_sorted else ["—"])
+    c1, c2 = st.columns([1,1])
+    pick_one = c1.selectbox("Select class", classes if classes else ["—"])
     sub = view[view[CLASS]==pick_one].copy()
-
     if not sub.empty:
-        d1.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
+        c1.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
+        if sub["Date"].notna().any():
+            c2.write("Points over time (selected class)")
+            t2 = (sub.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
+            c2.line_chart(t2, use_container_width=True)
+        c1.write("Category averages (selected class)")
         cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
         if cat_cols:
-            s_cat = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
-            # Use same minimalist bar
-            bar_series(s_cat, height=300)
-        recent = (sub.sort_values("Timestamp_dt", ascending=False)[["Timestamp_dt","Total pts"] + [c for c in cat_cols]]
-                  .rename(columns={"Timestamp_dt":"Timestamp"}).head(20))
-        d2.dataframe(recent, use_container_width=True, height=340)
+            cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+            c1.bar_chart(cavg, use_container_width=True)
     else:
         st.info("No rows for this class with current filters.")
-    st.markdown('</div>', unsafe_allow_html=True)
+
+# ============ TAB 2: SUBMIT ============
+with tabs[1]:
+    st.title("Submit log")
+    st.write("Register points directly here. The form is embedded below.")
+    if GOOGLE_FORM_URL:
+        components.iframe(GOOGLE_FORM_URL, height=1200)
+    else:
+        st.info("Google Form URL is not configured.")
