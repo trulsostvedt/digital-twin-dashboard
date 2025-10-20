@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 import numpy as np
 import requests
@@ -9,28 +10,26 @@ import streamlit.components.v1 as components
 # ----------------------------
 # CONFIG
 # ----------------------------
-st.set_page_config(page_title="Digital Twin – Sustainability Dashboard",
-                   page_icon="🌿", layout="wide")
+st.set_page_config(page_title="Digital Twin – Sustainability Dashboard", layout="wide")
 
-# Google Sheets (fast URL til "Answer Log")
+# Fixed Google Sheets CSV URL (Answer Log)
 SHEET_CSV_URL = (
     "https://docs.google.com/spreadsheets/d/"
     "1I9o3wvPS73huWO5_lLenhylSmjfMzDfnuR3kr4GcK34/"
     "gviz/tq?tqx=out:csv&sheet=Answer%20Log"
 )
 
-# (Valgfritt) Google Form inne i appen
+# (Optional) Embedded Google Form inside the app
 GOOGLE_FORM_URL = (
     "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=sf_link"
 )
 
 # ----------------------------
-# THEME-AWARE CSS (fungerer i dark & light)
+# THEME-AWARE CSS (works in dark & light)
 # ----------------------------
 THEME_CSS = """
 <style>
 :root { --radius: 14px; }
-/* Bruk Streamlit sine farge-variabler, så tilpasser alt seg til mørk/lys modus */
 [data-testid="stMetric"] {
   background: var(--secondary-background-color);
   border: 1px solid var(--background-color);
@@ -43,7 +42,7 @@ div[data-testid="stDataFrame"] {
   border-radius: var(--radius);
   box-shadow: 0 1px 8px rgba(0,0,0,0.04);
 }
-hr, .st-emotion-cache-12w0qpk {  /* horisontlinje */
+hr, .st-emotion-cache-12w0qpk {
   border-color: var(--secondary-background-color) !important;
 }
 h1, h2, h3 { letter-spacing: 0.2px; }
@@ -61,7 +60,7 @@ with st.sidebar:
 _ = st_autorefresh(interval=refresh_sec*1000, key="auto")
 
 # ----------------------------
-# DATA LOADING
+# HELPERS
 # ----------------------------
 @st.cache_data(ttl=10, show_spinner=False)
 def fetch_csv(url: str) -> pd.DataFrame:
@@ -74,7 +73,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     ts_col = next((c for c in df.columns if "timestamp" in c.lower()), None)
     if ts_col:
         s = df[ts_col].astype(str).str.strip()
-        s = s.str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)               # fjern "kl."
+        s = s.str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)  # remove "kl."
         s = s.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)  # 12.13.18 -> 12:13:18
         dt = pd.to_datetime(s, errors="coerce", dayfirst=True, infer_datetime_format=True)
         mask = dt.isna()
@@ -97,7 +96,6 @@ def infer_class_col(df: pd.DataFrame) -> str:
     opts = [c for c in df.columns if "class" in c.lower()]
     return opts[0] if opts else df.columns[0]
 
-# Fallback-scoreberegning dersom poengkolonner ikke finnes i arket
 def count_yeses(text: str) -> int:
     return text.count("Yes") if isinstance(text, str) else 0
 
@@ -162,10 +160,33 @@ def load_data():
     df = ensure_points(df)
     return df, cls
 
+# Natural class sort: 1A, 1B, …, 10A, 10B; others (like Teachers) last
+def class_sort_key(x: str):
+    if not isinstance(x, str): return (9999, "")
+    s = x.strip()
+    m = re.search(r"(\d+)\s*([A-Za-z]+)", s)
+    if m:
+        return (int(m.group(1)), m.group(2).lower())
+    return (9998, s.lower())
+
+def sort_index_naturally(series_or_df, axis=0):
+    idx = series_or_df.index if axis == 0 else series_or_df.columns
+    ordered = sorted(idx, key=class_sort_key)
+    return series_or_df.reindex(ordered)
+
 # ----------------------------
-# APP LAYOUT (to faner)
+# APP LAYOUT (tabs)
 # ----------------------------
 tabs = st.tabs(["Dashboard", "Submit log"])
+
+# ============ TAB 2: SUBMIT ============
+with tabs[1]:
+    st.title("Submit log")
+    st.write("Register points via the embedded Google Form below.")
+    if GOOGLE_FORM_URL:
+        components.iframe(GOOGLE_FORM_URL, height=1200)
+    else:
+        st.info("Google Form URL is not configured.")
 
 # ============ TAB 1: DASHBOARD ============
 with tabs[0]:
@@ -175,19 +196,19 @@ with tabs[0]:
         df, CLASS = load_data()
     except Exception as e:
         st.error(
-            "Kunne ikke laste data fra Google Sheets. "
-            "Sjekk at arket er delt som 'Alle med lenken → Seer'.\n\nDetaljer: {}".format(e)
+            "Could not load data from Google Sheets. "
+            "Ensure the spreadsheet is shared as 'Anyone with the link → Viewer'.\n\nDetails: {}".format(e)
         )
         st.stop()
 
     if df.empty:
-        st.warning("Ingen data enda. Send inn et svar i skjemaet.")
+        st.warning("No data yet. Submit a response in the form.")
         st.stop()
 
-    # Filtre
+    # Filters (sidebar)
     with st.sidebar:
         st.title("Filters")
-        classes = sorted([c for c in df[CLASS].dropna().unique().tolist()])
+        classes = sorted([c for c in df[CLASS].dropna().unique().tolist()], key=class_sort_key)
         picked = st.multiselect("Class", classes, default=classes)
 
         if df["Date"].notna().any():
@@ -198,75 +219,119 @@ with tabs[0]:
 
         st.markdown("---")
         st.subheader("Monthly leaderboard")
-        months = sorted([m for m in df["YearMonth"].dropna().unique()])
-        default_idx = max(len(months)-1, 0) if months else 0
-        sel_month = st.selectbox("Month", months if months else ["–"], index=default_idx)
+        months_all = sorted([m for m in df["YearMonth"].dropna().unique()])
+        # Default to current month if present, else last available
+        current_month = pd.Timestamp("now").to_period("M").astype(str)
+        default_month = months_all.index(current_month) if current_month in months_all else (len(months_all)-1 if months_all else 0)
+        sel_month = st.selectbox("Month", months_all if months_all else ["–"], index=max(default_month,0))
         metric = st.radio("Metric", ["Total points", "Average points"], index=0)
 
+    # Global filtered view (by class + date)
     mask = df[CLASS].isin(picked)
     if date_range[0] and date_range[1]:
         mask &= (df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])
     view = df.loc[mask].copy()
 
-    # KPI-er
+    # ----- Monthly winners (current & last) -----
+    def monthly_leader(df_month: pd.DataFrame):
+        if metric == "Total points":
+            s = df_month.groupby(CLASS)["Total pts"].apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
+        else:
+            s = df_month.groupby(CLASS)["Total pts"].apply(lambda x: pd.to_numeric(x, errors="coerce").mean())
+        if s.empty: return None, None
+        # Natural order for ties stability
+        s = s.reindex(sorted(s.index, key=class_sort_key))
+        return s.idxmax(), s.max()
+
+    this_month = current_month
+    last_month = None
+    if months_all:
+        if this_month in months_all:
+            idx = months_all.index(this_month)
+            if idx > 0:
+                last_month = months_all[idx-1]
+        else:
+            last_month = months_all[-1] if len(months_all) >= 1 else None
+
+    # KPI row (Top right KPI shows monthly top class instead of overall avg)
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Submissions", f"{len(view):,}")
-    col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}" if len(view) else "–")
+    col2.metric("Avg points / submission",
+                f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}" if len(view) else "–")
     today = pd.Timestamp('today').date()
     today_pts = pd.to_numeric(view.loc[view["Date"]==today, "Total pts"], errors="coerce").sum()
     col3.metric("Today total", int(today_pts) if pd.notna(today_pts) else 0)
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
-    best_display = 0 if pd.isna(best) else int(best)
-    col4.metric("Highest single score", best_display)
-    top = (view.groupby(CLASS)["Total pts"].apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
-           .sort_values(ascending=False).head(1))
-    col5.metric("Top class (avg)", f"{top.index[0]} ({top.iloc[0]:.2f})" if not top.empty else "–")
+    col4.metric("Highest single score", 0 if pd.isna(best) else int(best))
+
+    # Compute monthly leader for current selection of sel_month
+    month_view_sel = view[view["YearMonth"] == sel_month]
+    m_winner, m_value = monthly_leader(month_view_sel)
+    if m_winner is not None:
+        suffix = "total" if metric == "Total points" else "avg"
+        col5.metric("Top class (monthly)", f"{m_winner} ({m_value:.2f} {suffix})")
+    else:
+        col5.metric("Top class (monthly)", "–")
 
     st.markdown("---")
 
-    # Venstre (leaderboards) / Høyre (grafer og logg)
+    # ===== Row 1: Monthly leaderboard (left) + Category breakdown (right) =====
     left, right = st.columns([1.05, 1])
 
     with left:
         st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
-        if months and sel_month in months:
-            month_view = view[view["YearMonth"] == sel_month]
-            if metric == "Total points":
-                leader_m = (month_view.groupby(CLASS)["Total pts"]
-                            .apply(lambda s: pd.to_numeric(s, errors="coerce").sum())
-                            .sort_values(ascending=True))
-            else:
-                leader_m = (month_view.groupby(CLASS)["Total pts"]
-                            .apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
-                            .sort_values(ascending=True))
-            if not leader_m.empty:
-                st.bar_chart(leader_m, use_container_width=True)
-                winner, val = leader_m.idxmax(), leader_m.max()
-                unit = "total" if metric == "Total points" else "avg"
-                st.success(f"Winner {sel_month}: Class {winner} — {val:.2f} points ({unit})")
-            else:
-                st.info("No submissions for that month with current filters.")
-        else:
-            st.info("No months available yet.")
 
-        st.subheader("Leaderboard (avg points by class)")
-        leader = (view.groupby(CLASS)["Total pts"]
-                  .apply(lambda s: pd.to_numeric(s, errors="coerce").mean())
-                  .sort_values(ascending=True))
-        if not leader.empty:
-            st.bar_chart(leader, use_container_width=True)
-        else:
-            st.write("No data in current filters.")
+        # Winner announcement ABOVE chart
+        # Show last month's winner and current month leader (if current)
+        if last_month:
+            lm_view = view[view["YearMonth"] == last_month]
+            lm_winner, lm_value = monthly_leader(lm_view)
+            if lm_winner is not None:
+                st.info(f"Last month winner: Class {lm_winner} — {lm_value:.2f} points")
 
-        st.subheader("Category breakdown (avg per submission)")
+        if this_month and sel_month == this_month:
+            tm_view = view[view["YearMonth"] == this_month]
+            tm_winner, tm_value = monthly_leader(tm_view)
+            if tm_winner is not None:
+                st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
+
+        # Selected month chart
+        if metric == "Total points":
+            leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
+                        .apply(lambda s: pd.to_numeric(s, errors="coerce").sum()))
+        else:
+            leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
+                        .apply(lambda s: pd.to_numeric(s, errors="coerce").mean()))
+        if not leader_m.empty:
+            leader_m = leader_m.reindex(sorted(leader_m.index, key=class_sort_key))
+            st.bar_chart(leader_m, use_container_width=True)
+        else:
+            st.write("No submissions for the selected month (with current filters).")
+
+    with right:
+        st.subheader("Category breakdown (average per submission)")
         cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
         if cat_cols:
-            cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+            cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean()
+            cats = cats.sort_values(ascending=True)
             st.bar_chart(cats, use_container_width=True)
         else:
             st.write("No category columns available.")
 
-    with right:
+    # ===== Row 2: Overall leaderboard avg (left) + Points over time (right) =====
+    left2, right2 = st.columns([1.05, 1])
+
+    with left2:
+        st.subheader("Leaderboard (average points by class)")
+        leader_all = (view.groupby(CLASS)["Total pts"]
+                      .apply(lambda s: pd.to_numeric(s, errors="coerce").mean()))
+        if not leader_all.empty:
+            leader_all = leader_all.reindex(sorted(leader_all.index, key=class_sort_key))
+            st.bar_chart(leader_all.sort_values(ascending=True), use_container_width=True)
+        else:
+            st.write("No data in current filters.")
+
+    with right2:
         st.subheader("Points over time")
         if view["Date"].notna().any():
             trend = (view.groupby("Date")[["Total pts"]]
@@ -275,16 +340,20 @@ with tabs[0]:
         else:
             st.write("No valid dates parsed from Timestamp.")
 
-        st.subheader("Latest submissions")
-        show_cols = ["Timestamp_dt", CLASS, "Total pts"] + [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
-        latest = (view.sort_values("Timestamp_dt", ascending=False)[show_cols]
-                  .rename(columns={"Timestamp_dt":"Timestamp"}).head(25))
-        st.dataframe(latest, use_container_width=True, height=440)
+    # ===== Row 3: Latest submissions (full width) =====
+    st.subheader("Latest submissions")
+    show_cols = ["Timestamp_dt", CLASS, "Total pts"] + [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
+    latest = (view.sort_values("Timestamp_dt", ascending=False)[show_cols]
+              .rename(columns={"Timestamp_dt":"Timestamp"}).head(50))
+    st.dataframe(latest, use_container_width=True, height=420)
 
     st.markdown("---")
+
+    # ===== Row 4: Class detail (kept as-is) =====
     st.subheader("Class detail")
+    classes_sorted = sorted([c for c in df[CLASS].dropna().unique().tolist()], key=class_sort_key)
     c1, c2 = st.columns([1,1])
-    pick_one = c1.selectbox("Select class", classes if classes else ["—"])
+    pick_one = c1.selectbox("Select class", classes_sorted if classes_sorted else ["—"])
     sub = view[view[CLASS]==pick_one].copy()
     if not sub.empty:
         c1.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
@@ -293,18 +362,9 @@ with tabs[0]:
             t2 = (sub.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
             c2.line_chart(t2, use_container_width=True)
         c1.write("Category averages (selected class)")
-        cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
         if cat_cols:
-            cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+            cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean()
+            cavg = cavg.sort_values(ascending=True)
             c1.bar_chart(cavg, use_container_width=True)
     else:
         st.info("No rows for this class with current filters.")
-
-# ============ TAB 2: SUBMIT ============
-with tabs[1]:
-    st.title("Submit log")
-    st.write("Register points directly here. The form is embedded below.")
-    if GOOGLE_FORM_URL:
-        components.iframe(GOOGLE_FORM_URL, height=1200)
-    else:
-        st.info("Google Form URL is not configured.")
