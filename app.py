@@ -275,19 +275,8 @@ with tabs[0]:
     left, right = st.columns([1.05, 1])
 
     with left:
-        # Announcements above the chart
-        if last_month:
-            lm_view = view[view["YearMonth"] == last_month]
-            lm_winner, lm_value = monthly_leader(lm_view)
-            if lm_winner is not None:
-                st.info(f"Last month winner: Class {lm_winner} — {lm_value:.2f} points")
-
-        if this_month and sel_month == this_month:
-            tm_view = view[view["YearMonth"] == this_month]
-            tm_winner, tm_value = monthly_leader(tm_view)
-            if tm_winner is not None:
-                st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
-
+        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
+        
         # Selected month chart
         if m_winner is not None:
             if metric == "Total points":
@@ -301,7 +290,19 @@ with tabs[0]:
         else:
             st.write("No submissions for the selected month (with current filters).")
         
-        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
+        # Announcements below the chart
+        if last_month:
+            lm_view = view[view["YearMonth"] == last_month]
+            lm_winner, lm_value = monthly_leader(lm_view)
+            if lm_winner is not None:
+                st.info(f"Last month winner: Class {lm_winner} — {lm_value:.2f} points")
+
+        if this_month and sel_month == this_month:
+            tm_view = view[view["YearMonth"] == this_month]
+            tm_winner, tm_value = monthly_leader(tm_view)
+            if tm_winner is not None:
+                st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
+
 
     with right:
         st.subheader("Category breakdown (average per submission)")
