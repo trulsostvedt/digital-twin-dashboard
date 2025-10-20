@@ -160,7 +160,7 @@ def load_data():
     df = ensure_points(df)
     return df, cls
 
-# Natural class sort: 1A, 1B, …, 10A, 10B; others (like Teachers) last
+# Natural class sort: 1A, 1B, …, 10A, 10B; others last
 def class_sort_key(x: str):
     if not isinstance(x, str): return (9999, "")
     s = x.strip()
@@ -168,11 +168,6 @@ def class_sort_key(x: str):
     if m:
         return (int(m.group(1)), m.group(2).lower())
     return (9998, s.lower())
-
-def sort_index_naturally(series_or_df, axis=0):
-    idx = series_or_df.index if axis == 0 else series_or_df.columns
-    ordered = sorted(idx, key=class_sort_key)
-    return series_or_df.reindex(ordered)
 
 # ----------------------------
 # APP LAYOUT (tabs)
@@ -220,10 +215,10 @@ with tabs[0]:
         st.markdown("---")
         st.subheader("Monthly leaderboard")
         months_all = sorted([m for m in df["YearMonth"].dropna().unique()])
-        # Default to current month if present, else last available
-        current_month = pd.Timestamp("now").to_period("M").astype(str)
+        # FIX: use strftime so we compare string-to-string
+        current_month = pd.Timestamp.now().strftime("%Y-%m")
         default_month = months_all.index(current_month) if current_month in months_all else (len(months_all)-1 if months_all else 0)
-        sel_month = st.selectbox("Month", months_all if months_all else ["–"], index=max(default_month,0))
+        sel_month = st.selectbox("Month", months_all if months_all else ["–"], index=max(default_month, 0))
         metric = st.radio("Metric", ["Total points", "Average points"], index=0)
 
     # Global filtered view (by class + date)
@@ -234,12 +229,14 @@ with tabs[0]:
 
     # ----- Monthly winners (current & last) -----
     def monthly_leader(df_month: pd.DataFrame):
+        if df_month.empty:
+            return None, None
         if metric == "Total points":
             s = df_month.groupby(CLASS)["Total pts"].apply(lambda x: pd.to_numeric(x, errors="coerce").sum())
         else:
             s = df_month.groupby(CLASS)["Total pts"].apply(lambda x: pd.to_numeric(x, errors="coerce").mean())
-        if s.empty: return None, None
-        # Natural order for ties stability
+        if s.empty: 
+            return None, None
         s = s.reindex(sorted(s.index, key=class_sort_key))
         return s.idxmax(), s.max()
 
@@ -264,7 +261,6 @@ with tabs[0]:
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
     col4.metric("Highest single score", 0 if pd.isna(best) else int(best))
 
-    # Compute monthly leader for current selection of sel_month
     month_view_sel = view[view["YearMonth"] == sel_month]
     m_winner, m_value = monthly_leader(month_view_sel)
     if m_winner is not None:
@@ -280,9 +276,7 @@ with tabs[0]:
 
     with left:
         st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
-
-        # Winner announcement ABOVE chart
-        # Show last month's winner and current month leader (if current)
+        # Announcements above the chart
         if last_month:
             lm_view = view[view["YearMonth"] == last_month]
             lm_winner, lm_value = monthly_leader(lm_view)
@@ -296,13 +290,13 @@ with tabs[0]:
                 st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
 
         # Selected month chart
-        if metric == "Total points":
-            leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
-                        .apply(lambda s: pd.to_numeric(s, errors="coerce").sum()))
-        else:
-            leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
-                        .apply(lambda s: pd.to_numeric(s, errors="coerce").mean()))
-        if not leader_m.empty:
+        if m_winner is not None:
+            if metric == "Total points":
+                leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
+                            .apply(lambda s: pd.to_numeric(s, errors="coerce").sum()))
+            else:
+                leader_m = (month_view_sel.groupby(CLASS)["Total pts"]
+                            .apply(lambda s: pd.to_numeric(s, errors="coerce").mean()))
             leader_m = leader_m.reindex(sorted(leader_m.index, key=class_sort_key))
             st.bar_chart(leader_m, use_container_width=True)
         else:
@@ -334,8 +328,7 @@ with tabs[0]:
     with right2:
         st.subheader("Points over time")
         if view["Date"].notna().any():
-            trend = (view.groupby("Date")[["Total pts"]]
-                     .sum(numeric_only=True).sort_index())
+            trend = (view.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
             st.line_chart(trend, use_container_width=True)
         else:
             st.write("No valid dates parsed from Timestamp.")
@@ -349,7 +342,7 @@ with tabs[0]:
 
     st.markdown("---")
 
-    # ===== Row 4: Class detail (kept as-is) =====
+    # ===== Row 4: Class detail =====
     st.subheader("Class detail")
     classes_sorted = sorted([c for c in df[CLASS].dropna().unique().tolist()], key=class_sort_key)
     c1, c2 = st.columns([1,1])
@@ -362,9 +355,9 @@ with tabs[0]:
             t2 = (sub.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
             c2.line_chart(t2, use_container_width=True)
         c1.write("Category averages (selected class)")
-        if cat_cols:
-            cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean()
-            cavg = cavg.sort_values(ascending=True)
+        cat_cols_cd = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
+        if cat_cols_cd:
+            cavg = sub[cat_cols_cd].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
             c1.bar_chart(cavg, use_container_width=True)
     else:
         st.info("No rows for this class with current filters.")
