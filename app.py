@@ -271,9 +271,6 @@ with tabs[0]:
 
     st.markdown("---")
 
-    # ===== Row 1: Monthly leaderboard (left) + Category breakdown (right) =====
-    left, right = st.columns([1.05, 1])
-
 # Announcements below the chart
     if last_month:
         lm_view = view[view["YearMonth"] == last_month]
@@ -286,6 +283,11 @@ with tabs[0]:
         tm_winner, tm_value = monthly_leader(tm_view)
         if tm_winner is not None:
             st.success(f"Current month leader: Class {tm_winner} — {tm_value:.2f}")
+
+
+    # ===== Row 1: Monthly leaderboard (left) + Category breakdown (right) =====
+    left, right = st.columns([1.05, 1])
+
 
 
 
