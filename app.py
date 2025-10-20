@@ -265,7 +265,7 @@ with tabs[0]:
     m_winner, m_value = monthly_leader(month_view_sel)
     if m_winner is not None:
         suffix = "total" if metric == "Total points" else "avg"
-        col5.metric("Top class (monthly)", f"{m_winner} ({m_value:.2f} {suffix})")
+        col5.metric("Top class (monthly)", f"{m_winner}")
     else:
         col5.metric("Top class (monthly)", "–")
 
@@ -275,7 +275,6 @@ with tabs[0]:
     left, right = st.columns([1.05, 1])
 
     with left:
-        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
         # Announcements above the chart
         if last_month:
             lm_view = view[view["YearMonth"] == last_month]
@@ -301,6 +300,8 @@ with tabs[0]:
             st.bar_chart(leader_m, use_container_width=True)
         else:
             st.write("No submissions for the selected month (with current filters).")
+        
+        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
 
     with right:
         st.subheader("Category breakdown (average per submission)")
