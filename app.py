@@ -100,7 +100,7 @@ def count_yeses(text: str) -> int:
 def score_heater(val: str) -> int:
     if not isinstance(val, str): return 0
     s = val.lower()
-    if "did not use the heater" in s: return 1
+    if "did not use the heater" in s: return 2
     if "windows and the door" in s:   return 2
     if "closed the windows" in s:     return 1
     if "closed the door" in s:        return 1
