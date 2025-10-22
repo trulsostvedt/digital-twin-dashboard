@@ -26,12 +26,11 @@ GOOGLE_FORM_URL = (
 )
 
 # ----------------------------
-# THEME-AWARE CSS (fungerer i dark & light)
+# THEME-AWARE CSS
 # ----------------------------
 THEME_CSS = """
 <style>
 :root { --radius: 14px; }
-/* Bruk Streamlit sine farge-variabler, så tilpasser alt seg til mørk/lys modus */
 [data-testid="stMetric"] {
   background: var(--secondary-background-color);
   border: 1px solid var(--background-color);
@@ -44,7 +43,7 @@ div[data-testid="stDataFrame"] {
   border-radius: var(--radius);
   box-shadow: 0 1px 8px rgba(0,0,0,0.04);
 }
-hr, .st-emotion-cache-12w0qpk {  /* horisontlinje */
+hr, .st-emotion-cache-12w0qpk {
   border-color: var(--secondary-background-color) !important;
 }
 h1, h2, h3 { letter-spacing: 0.2px; }
@@ -98,7 +97,9 @@ def infer_class_col(df: pd.DataFrame) -> str:
     opts = [c for c in df.columns if "class" in c.lower()]
     return opts[0] if opts else df.columns[0]
 
-# Fallback-scoreberegning dersom poengkolonner ikke finnes i arket
+# ----------------------------
+# SCORING FUNCTIONS
+# ----------------------------
 def count_yeses(text: str) -> int:
     return text.count("Yes") if isinstance(text, str) else 0
 
@@ -140,6 +141,7 @@ def ensure_points(df: pd.DataFrame) -> pd.DataFrame:
     C_WATER   = next((c for c in cols if "water the plants" in c.lower()), None)
     C_COLLECT = next((c for c in cols if "collect any plants" in c.lower()), None)
     C_PLANT   = next((c for c in cols if "plant any seeds" in c.lower() or "planted new things" in c.lower()), None)
+
     df["Lights pts"]  = df[C_LIGHTS].apply(count_yeses) if C_LIGHTS in cols else 0
     df["Heater pts"]  = df[C_HEATER].apply(score_heater) if C_HEATER in cols else 0
     df["Plastic pts"] = df[C_PLAST].apply(score_plastic) if C_PLAST in cols else 0
@@ -163,7 +165,7 @@ def load_data():
     return df, cls
 
 # ----------------------------
-# Fargepalett for klasser
+# CLASS COLORS
 # ----------------------------
 CLASS_COLORS = {
     "1A": "#66c2a5", "1B": "#fc8d62", "2A": "#8da0cb", "2B": "#e78ac3",
@@ -173,24 +175,23 @@ CLASS_COLORS = {
     "9A": "#a6cee3", "9B": "#b2df8a", "10A": "#fb8072", "10B": "#80b1d3",
 }
 
-def plot_colored_barchart(data, title):
-    if data.empty:
+def plot_colored_barchart(series, title):
+    if series.empty:
         st.info("No data to display.")
         return
-    df = data.reset_index()
+    df = series.reset_index()
     df.columns = ["Class", "Points"]
     colors = [CLASS_COLORS.get(c, "#cccccc") for c in df["Class"]]
     fig = px.bar(df, x="Class", y="Points", color="Class",
                  color_discrete_sequence=colors, title=title)
-    fig.update_layout(showlegend=False, height=380, margin=dict(l=0, r=0, t=40, b=0))
+    fig.update_layout(showlegend=False, height=350, margin=dict(l=0, r=0, t=40, b=0))
     st.plotly_chart(fig, use_container_width=True)
 
 # ----------------------------
-# APP LAYOUT (to faner)
+# APP LAYOUT
 # ----------------------------
 tabs = st.tabs(["Dashboard", "Submit log"])
 
-# ============ TAB 1: DASHBOARD ============
 with tabs[0]:
     st.title("Digital Twin — Sustainability Dashboard")
 
@@ -201,7 +202,7 @@ with tabs[0]:
         st.stop()
 
     if df.empty:
-        st.warning("Ingen data enda. Send inn et svar i skjemaet.")
+        st.warning("Ingen data enda.")
         st.stop()
 
     # Filtre
@@ -209,13 +210,11 @@ with tabs[0]:
         st.title("Filters")
         classes = sorted([c for c in df[CLASS].dropna().unique().tolist()])
         picked = st.multiselect("Class", classes, default=classes)
-
         if df["Date"].notna().any():
             dmin, dmax = df["Date"].min(), df["Date"].max()
             date_range = st.date_input("Date range", value=(dmin, dmax))
         else:
             date_range = (None, None)
-
         st.markdown("---")
         st.subheader("Monthly leaderboard")
         months = sorted([m for m in df["YearMonth"].dropna().unique()])
@@ -231,13 +230,13 @@ with tabs[0]:
     # KPI-er
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Submissions", f"{len(view):,}")
-    col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}" if len(view) else "–")
+    col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}")
     today = pd.Timestamp('today').date()
     today_pts = pd.to_numeric(view.loc[view["Date"]==today, "Total pts"], errors="coerce").sum()
-    col3.metric("Today total", int(today_pts) if pd.notna(today_pts) else 0)
+    col3.metric("Today total", int(today_pts))
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
     col4.metric("Highest single score", int(best))
-    top = (view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=False).head(1))
+    top = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=False).head(1)
     col5.metric("Top class (avg)", f"{top.index[0]} ({top.iloc[0]:.2f})" if not top.empty else "–")
 
     st.markdown("---")
@@ -250,21 +249,21 @@ with tabs[0]:
         if months and sel_month in months:
             month_view = view[view["YearMonth"] == sel_month]
             if metric == "Total points":
-                leader_m = (month_view.groupby(CLASS)["Total pts"].sum().sort_values(ascending=True))
+                leader_m = month_view.groupby(CLASS)["Total pts"].sum().sort_values(ascending=True)
             else:
-                leader_m = (month_view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True))
+                leader_m = month_view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
             if not leader_m.empty:
                 plot_colored_barchart(leader_m, f"Leaderboard for {sel_month}")
                 winner, val = leader_m.idxmax(), leader_m.max()
                 unit = "total" if metric == "Total points" else "avg"
                 st.success(f"Winner {sel_month}: Class {winner} — {val:.2f} points ({unit})")
             else:
-                st.info("No submissions for that month with current filters.")
+                st.info("No submissions for that month.")
         else:
             st.info("No months available yet.")
 
         st.subheader("Leaderboard (avg points by class)")
-        leader = (view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True))
+        leader = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
         if not leader.empty:
             plot_colored_barchart(leader, "Average points by class")
         else:
@@ -279,17 +278,9 @@ with tabs[0]:
             st.write("No category columns available.")
 
     with right:
-        st.subheader("Points over time")
-        if view["Date"].notna().any():
-            trend = (view.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
-            st.line_chart(trend, use_container_width=True)
-        else:
-            st.write("No valid dates parsed from Timestamp.")
-
         st.subheader("Latest submissions")
         show_cols = ["Timestamp_dt", CLASS, "Total pts"] + [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
-        latest = (view.sort_values("Timestamp_dt", ascending=False)[show_cols]
-                  .rename(columns={"Timestamp_dt":"Timestamp"}).head(25))
+        latest = view.sort_values("Timestamp_dt", ascending=False)[show_cols].rename(columns={"Timestamp_dt":"Timestamp"}).head(25)
         st.dataframe(latest, use_container_width=True, height=440)
 
     st.markdown("---")
@@ -299,17 +290,13 @@ with tabs[0]:
     sub = view[view[CLASS]==pick_one].copy()
     if not sub.empty:
         c1.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
-        if sub["Date"].notna().any():
-            c2.write("Points over time (selected class)")
-            t2 = (sub.groupby("Date")[["Total pts"]].sum(numeric_only=True).sort_index())
-            c2.line_chart(t2, use_container_width=True)
         c1.write("Category averages (selected class)")
         cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
         if cat_cols:
             cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
             c1.bar_chart(cavg, use_container_width=True)
     else:
-        st.info("No rows for this class with current filters.")
+        st.info("No rows for this class.")
 
 # ============ TAB 2: SUBMIT ============
 with tabs[1]:
