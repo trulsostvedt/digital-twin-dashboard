@@ -255,24 +255,66 @@ with tabs[0]:
         plot_colored_barchart(leader, "Average points by class")
 
     st.subheader("Category breakdown (avg per submission)")
-    cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
-    if cat_cols:
-        cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
-        st.bar_chart(cats, use_container_width=True)
+
+    # Grupper kategorier i Electricity / Recycling / Garden
+    if all(c in view.columns for c in ["Lights pts", "Heater pts", "Plastic pts", "Paper pts", "Garden pts"]):
+        grouped = pd.DataFrame({
+            "Electricity": view[["Lights pts", "Heater pts"]].apply(pd.to_numeric, errors="coerce").mean(axis=1),
+            "Recycling": view[["Plastic pts", "Paper pts"]].apply(pd.to_numeric, errors="coerce").mean(axis=1),
+            "Garden": pd.to_numeric(view["Garden pts"], errors="coerce")
+        })
+
+        avg_grouped = grouped.mean().sort_values(ascending=True)
+
+        # Plot fargede stolper for de tre hovedområdene
+        fig = px.bar(
+            x=avg_grouped.index,
+            y=avg_grouped.values,
+            color=avg_grouped.index,
+            color_discrete_sequence=["#66c2a5", "#8da0cb", "#a6d854"],  # Electricity, Recycling, Garden
+            title="Average points by sustainability area"
+        )
+        fig.update_layout(showlegend=False, height=350, margin=dict(l=0, r=0, t=40, b=0))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Some categories missing from the dataset.")
 
     st.markdown("---")
     st.subheader("Class detail")
+
     pick_one = st.selectbox("Select class", classes if classes else ["—"])
-    sub = view[view[CLASS]==pick_one].copy()
+    sub = view[view[CLASS] == pick_one].copy()
+
     if not sub.empty:
-        st.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
-        cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
-        if cat_cols:
-            cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+        st.write(
+            f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  "
+            f"|  Submissions: {len(sub)}"
+        )
+
+        if all(c in sub.columns for c in ["Lights pts", "Heater pts", "Plastic pts", "Paper pts", "Garden pts"]):
+            grouped_class = pd.DataFrame({
+                "Electricity": sub[["Lights pts", "Heater pts"]].apply(pd.to_numeric, errors="coerce").mean(axis=1),
+                "Recycling": sub[["Plastic pts", "Paper pts"]].apply(pd.to_numeric, errors="coerce").mean(axis=1),
+                "Garden": pd.to_numeric(sub["Garden pts"], errors="coerce")
+            })
+
+            avg_grouped_class = grouped_class.mean().sort_values(ascending=True)
             color = CLASS_COLORS.get(pick_one, "#5DADE2")
-            plot_single_color_bar(cavg, f"Category averages — {pick_one}", color)
+
+            # Enkeltfarget graf basert på klassens farge
+            fig = px.bar(
+                x=avg_grouped_class.index,
+                y=avg_grouped_class.values,
+                color_discrete_sequence=[color],
+                title=f"{pick_one} — Average points by sustainability area"
+            )
+            fig.update_layout(showlegend=False, height=350, margin=dict(l=0, r=0, t=40, b=0))
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Some data columns missing for this class.")
     else:
         st.info("No rows for this class.")
+
 
 with tabs[1]:
     st.title("Submit log")
