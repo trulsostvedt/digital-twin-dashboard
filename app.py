@@ -20,7 +20,7 @@ SHEET_CSV_URL = (
     "gviz/tq?tqx=out:csv&sheet=Answer%20Log"
 )
 
-# (Valgfritt) Google Form inne i appen
+# Google Form (embedded)
 GOOGLE_FORM_URL = (
     "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=sf_link"
 )
@@ -42,9 +42,6 @@ div[data-testid="stDataFrame"] {
   border: 1px solid var(--secondary-background-color);
   border-radius: var(--radius);
   box-shadow: 0 1px 8px rgba(0,0,0,0.04);
-}
-hr, .st-emotion-cache-12w0qpk {
-  border-color: var(--secondary-background-color) !important;
 }
 h1, h2, h3 { letter-spacing: 0.2px; }
 .block-container { padding-top: 1.0rem; padding-bottom: 1.0rem; }
@@ -71,19 +68,16 @@ def fetch_csv(url: str) -> pd.DataFrame:
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [c.strip() for c in df.columns]
-    ts_col = next((c for c in df.columns if "timestamp" in c.lower()), None)
+    ts_col = next((c for c in df.columns if "timestamp" in c.lower() or "tidsmerke" in c.lower()), None)
     if ts_col:
         s = df[ts_col].astype(str).str.strip()
         s = s.str.replace(r"\s*kl\.?\s*", " ", regex=True, case=False)
-        s = s.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", regex=True)
-        dt = pd.to_datetime(s, errors="coerce", dayfirst=True, infer_datetime_format=True)
-        mask = dt.isna()
-        if mask.any():
-            dt2 = pd.to_datetime(s[mask], format="%d.%m.%Y %H:%M:%S", errors="coerce")
-            dt.loc[mask] = dt2
+        s = s.str.replace(r"(\d{1,2})\.(\d{2})\.(\d{4})\s+(\d{1,2})\.(\d{2})\.(\d{2})",
+                          r"\3-\2-\1 \4:\5:\6", regex=True)
+        dt = pd.to_datetime(s, errors="coerce", utc=False)
         df["Timestamp_dt"] = dt
-        df["Date"] = df["Timestamp_dt"].dt.date
-        df["YearMonth"] = df["Timestamp_dt"].dt.to_period("M").astype(str)
+        df["Date"] = dt.dt.date
+        df["YearMonth"] = dt.dt.to_period("M").astype(str)
     else:
         df["Timestamp_dt"] = pd.NaT
         df["Date"] = pd.NaT
@@ -98,7 +92,7 @@ def infer_class_col(df: pd.DataFrame) -> str:
     return opts[0] if opts else df.columns[0]
 
 # ----------------------------
-# SCORING FUNCTIONS
+# SCORING
 # ----------------------------
 def count_yeses(text: str) -> int:
     return text.count("Yes") if isinstance(text, str) else 0
@@ -152,7 +146,7 @@ def ensure_points(df: pd.DataFrame) -> pd.DataFrame:
                          df[C_COLLECT] if C_COLLECT in cols else [None]*len(df),
                          df[C_PLANT] if C_PLANT in cols else [None]*len(df))
     ]
-    df["Total pts"]   = df[["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"]].sum(axis=1)
+    df["Total pts"] = df[["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"]].sum(axis=1)
     return df
 
 def load_data():
@@ -165,7 +159,7 @@ def load_data():
     return df, cls
 
 # ----------------------------
-# CLASS COLORS
+# COLORS FOR CLASSES
 # ----------------------------
 CLASS_COLORS = {
     "1A": "#66c2a5", "1B": "#fc8d62", "2A": "#8da0cb", "2B": "#e78ac3",
@@ -187,8 +181,13 @@ def plot_colored_barchart(series, title):
     fig.update_layout(showlegend=False, height=350, margin=dict(l=0, r=0, t=40, b=0))
     st.plotly_chart(fig, use_container_width=True)
 
+def plot_single_color_bar(series, title, color):
+    fig = px.bar(x=series.index, y=series.values, title=title, color_discrete_sequence=[color])
+    fig.update_layout(showlegend=False, height=350, margin=dict(l=0, r=0, t=40, b=0))
+    st.plotly_chart(fig, use_container_width=True)
+
 # ----------------------------
-# APP LAYOUT
+# APP
 # ----------------------------
 tabs = st.tabs(["Dashboard", "Submit log"])
 
@@ -210,11 +209,6 @@ with tabs[0]:
         st.title("Filters")
         classes = sorted([c for c in df[CLASS].dropna().unique().tolist()])
         picked = st.multiselect("Class", classes, default=classes)
-        if df["Date"].notna().any():
-            dmin, dmax = df["Date"].min(), df["Date"].max()
-            date_range = st.date_input("Date range", value=(dmin, dmax))
-        else:
-            date_range = (None, None)
         st.markdown("---")
         st.subheader("Monthly leaderboard")
         months = sorted([m for m in df["YearMonth"].dropna().unique()])
@@ -223,17 +217,12 @@ with tabs[0]:
         metric = st.radio("Metric", ["Total points", "Average points"], index=0)
 
     mask = df[CLASS].isin(picked)
-    if date_range[0] and date_range[1]:
-        mask &= (df["Date"] >= date_range[0]) & (df["Date"] <= date_range[1])
     view = df.loc[mask].copy()
 
     # KPI-er
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Submissions", f"{len(view):,}")
     col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}")
-    today = pd.Timestamp('today').date()
-    today_pts = pd.to_numeric(view.loc[view["Date"]==today, "Total pts"], errors="coerce").sum()
-    col3.metric("Today total", int(today_pts))
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
     col4.metric("Highest single score", int(best))
     top = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=False).head(1)
@@ -242,67 +231,48 @@ with tabs[0]:
     st.markdown("---")
 
     # Leaderboards
-    left, right = st.columns([1.05, 1])
-
-    with left:
-        st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
-        if months and sel_month in months:
-            month_view = view[view["YearMonth"] == sel_month]
-            if metric == "Total points":
-                leader_m = month_view.groupby(CLASS)["Total pts"].sum().sort_values(ascending=True)
-            else:
-                leader_m = month_view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
-            if not leader_m.empty:
-                plot_colored_barchart(leader_m, f"Leaderboard for {sel_month}")
-                winner, val = leader_m.idxmax(), leader_m.max()
-                unit = "total" if metric == "Total points" else "avg"
-                st.success(f"Winner {sel_month}: Class {winner} — {val:.2f} points ({unit})")
-            else:
-                st.info("No submissions for that month.")
+    st.subheader(f"Monthly leaderboard — {sel_month} ({metric})")
+    if months and sel_month in months:
+        month_view = view[view["YearMonth"] == sel_month]
+        if metric == "Total points":
+            leader_m = month_view.groupby(CLASS)["Total pts"].sum().sort_values(ascending=True)
         else:
-            st.info("No months available yet.")
-
-        st.subheader("Leaderboard (avg points by class)")
-        leader = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
-        if not leader.empty:
-            plot_colored_barchart(leader, "Average points by class")
+            leader_m = month_view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
+        if not leader_m.empty:
+            plot_colored_barchart(leader_m, f"Leaderboard for {sel_month}")
+            winner, val = leader_m.idxmax(), leader_m.max()
+            st.success(f"Winner {sel_month}: Class {winner} — {val:.2f} points")
         else:
-            st.write("No data in current filters.")
+            st.info("No submissions for that month.")
+    else:
+        st.info("No months available yet.")
 
-        st.subheader("Category breakdown (avg per submission)")
-        cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
-        if cat_cols:
-            cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
-            st.bar_chart(cats, use_container_width=True)
-        else:
-            st.write("No category columns available.")
+    st.subheader("Leaderboard (avg points by class)")
+    leader = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=True)
+    if not leader.empty:
+        plot_colored_barchart(leader, "Average points by class")
 
-    with right:
-        st.subheader("Latest submissions")
-        show_cols = ["Timestamp_dt", CLASS, "Total pts"] + [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
-        latest = view.sort_values("Timestamp_dt", ascending=False)[show_cols].rename(columns={"Timestamp_dt":"Timestamp"}).head(25)
-        st.dataframe(latest, use_container_width=True, height=440)
+    st.subheader("Category breakdown (avg per submission)")
+    cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in view.columns]
+    if cat_cols:
+        cats = view[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
+        st.bar_chart(cats, use_container_width=True)
 
     st.markdown("---")
     st.subheader("Class detail")
-    c1, c2 = st.columns([1,1])
-    pick_one = c1.selectbox("Select class", classes if classes else ["—"])
+    pick_one = st.selectbox("Select class", classes if classes else ["—"])
     sub = view[view[CLASS]==pick_one].copy()
     if not sub.empty:
-        c1.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
-        c1.write("Category averages (selected class)")
+        st.write(f"Average points: {pd.to_numeric(sub['Total pts'], errors='coerce').mean():.2f}  |  Submissions: {len(sub)}")
         cat_cols = [c for c in ["Lights pts","Heater pts","Plastic pts","Paper pts","Garden pts"] if c in sub.columns]
         if cat_cols:
             cavg = sub[cat_cols].apply(pd.to_numeric, errors="coerce").mean().sort_values(ascending=True)
-            c1.bar_chart(cavg, use_container_width=True)
+            color = CLASS_COLORS.get(pick_one, "#5DADE2")
+            plot_single_color_bar(cavg, f"Category averages — {pick_one}", color)
     else:
         st.info("No rows for this class.")
 
-# ============ TAB 2: SUBMIT ============
 with tabs[1]:
     st.title("Submit log")
-    st.write("Register points directly here. The form is embedded below.")
     if GOOGLE_FORM_URL:
         components.iframe(GOOGLE_FORM_URL, height=1200)
-    else:
-        st.info("Google Form URL is not configured.")
