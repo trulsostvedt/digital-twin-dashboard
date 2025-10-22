@@ -224,7 +224,9 @@ with tabs[0]:
     col1.metric("Submissions", f"{len(view):,}")
     col2.metric("Avg points / submission", f"{pd.to_numeric(view['Total pts'], errors='coerce').mean():.2f}")
     best = pd.to_numeric(view["Total pts"], errors="coerce").max()
+    col3.metric("Total points today", f"{pd.to_numeric(view[view['Date']==pd.Timestamp.now().date()]['Total pts'], errors='coerce').sum():.0f}")
     col4.metric("Highest single score", int(best))
+    
     top = view.groupby(CLASS)["Total pts"].mean().sort_values(ascending=False).head(1)
     col5.metric("Top class (avg)", f"{top.index[0]} ({top.iloc[0]:.2f})" if not top.empty else "–")
 
