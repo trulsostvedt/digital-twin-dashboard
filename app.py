@@ -22,7 +22,7 @@ SHEET_CSV_URL = (
 
 # Google Form (embedded)
 GOOGLE_FORM_URL = (
-    "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=sf_link"
+    "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=header"
 )
 
 # ----------------------------
