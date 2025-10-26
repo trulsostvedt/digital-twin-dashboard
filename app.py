@@ -10,7 +10,7 @@ import plotly.express as px
 # ----------------------------
 # CONFIG
 # ----------------------------
-st.set_page_config(page_title="Digital Twin – Sustainability Dashboard",
+st.set_page_config(page_title="Green Game – Sustainability Dashboard",
                    page_icon="🌿", layout="wide")
 
 # Google Sheets (fast URL til "Answer Log")
@@ -192,7 +192,7 @@ def plot_single_color_bar(series, title, color):
 tabs = st.tabs(["Dashboard", "Submit log"])
 
 with tabs[0]:
-    st.title("Digital Twin — Sustainability Dashboard")
+    st.title("Green Game — Sustainability Dashboard")
 
     try:
         df, CLASS = load_data()
