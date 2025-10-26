@@ -15,14 +15,13 @@ st.set_page_config(page_title="Green Game – Sustainability Dashboard",
 
 # Google Sheets (fast URL til "Answer Log")
 SHEET_CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/"
-    "1I9o3wvPS73huWO5_lLenhylSmjfMzDfnuR3kr4GcK34/"
-    "gviz/tq?tqx=out:csv&sheet=Answer%20Log"
+    "https://docs.google.com/spreadsheets/d/1I9o3wvPS73huWO5_lLenhylSmjfMzDfnuR3kr4GcK34/gviz/tq?tqx=out:csv&sheet=Answer%20Log"
 )
+
 
 # Google Form (embedded)
 GOOGLE_FORM_URL = (
-    "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?usp=header"
+    "https://docs.google.com/forms/d/e/1FAIpQLSefFkxKJE8sYn0Zsn_cxZ-fesYpCEPrLClbnz22pkWuT4MZ4g/viewform?embedded=true"
 )
 
 # ----------------------------
